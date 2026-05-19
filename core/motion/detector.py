@@ -13,8 +13,7 @@ class MotionConfig:
     """
     Configuration used by the motion detector.
 
-    The objective is to keep these parameters simple because later PSO will
-    optimize them automatically.
+    Later, PSO will optimize these values automatically.
     """
 
     resolution_width: int = 640
@@ -23,6 +22,7 @@ class MotionConfig:
     blur_kernel: int = 5
     min_contour_area: int = 800
     dilate_iterations: int = 2
+    event_merge_gap_seconds: float = 0.5
 
 
 def _ensure_odd_kernel(kernel_size: int) -> int:
@@ -55,6 +55,80 @@ def _resize_frame(frame, target_width: int):
     return cv2.resize(frame, (target_width, target_height))
 
 
+def _build_motion_boxes(
+    gray, previous_gray, config: MotionConfig
+) -> list[tuple[int, int, int, int]]:
+    """
+    Compare the current grayscale frame against the previous one and return
+    bounding boxes for relevant motion areas.
+    """
+
+    frame_delta = cv2.absdiff(previous_gray, gray)
+
+    _, threshold = cv2.threshold(
+        frame_delta,
+        config.motion_threshold,
+        255,
+        cv2.THRESH_BINARY,
+    )
+
+    threshold = cv2.dilate(
+        threshold,
+        None,
+        iterations=config.dilate_iterations,
+    )
+
+    contours, _ = cv2.findContours(
+        threshold,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    bounding_boxes: list[tuple[int, int, int, int]] = []
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+
+        if area < config.min_contour_area:
+            continue
+
+        x, y, w, h = cv2.boundingRect(contour)
+        bounding_boxes.append((x, y, w, h))
+
+    return bounding_boxes
+
+
+def _draw_motion_overlay(
+    frame,
+    bounding_boxes: list[tuple[int, int, int, int]],
+    motion_detected: bool,
+) -> None:
+    """
+    Draw bounding boxes and motion label over the output frame.
+    """
+
+    for x, y, w, h in bounding_boxes:
+        cv2.rectangle(
+            frame,
+            (x, y),
+            (x + w, y + h),
+            (0, 255, 0),
+            2,
+        )
+
+    label = "MOTION" if motion_detected else "NO MOTION"
+
+    cv2.putText(
+        frame,
+        label,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0) if motion_detected else (255, 255, 255),
+        2,
+    )
+
+
 def detect_motion(
     video_path: str | Path,
     config: MotionConfig,
@@ -72,7 +146,7 @@ def detect_motion(
     6. Compare current frame against previous frame.
     7. Threshold difference.
     8. Find contours.
-    9. Count motion frames and motion events.
+    9. Count raw and smoothed motion events.
     """
 
     video_path = Path(video_path)
@@ -89,14 +163,26 @@ def detect_motion(
     source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     frame_interval = max(int(round(source_fps / config.fps_sample)), 1)
+    effective_processed_fps = source_fps / frame_interval
+
+    max_event_gap_frames = max(
+        int(round(config.event_merge_gap_seconds * effective_processed_fps)),
+        1,
+    )
 
     previous_gray = None
     previous_motion = False
 
+    in_motion_event = False
+    no_motion_gap_frames = 0
+
     total_frames_read = 0
     processed_frames = 0
     motion_frames = 0
+
+    raw_motion_events = 0
     motion_events = 0
+
     total_processing_ms = 0.0
 
     writer = None
@@ -126,47 +212,38 @@ def detect_motion(
         blur_kernel = _ensure_odd_kernel(config.blur_kernel)
         gray = cv2.GaussianBlur(gray, (blur_kernel, blur_kernel), 0)
 
-        motion_detected = False
         bounding_boxes: list[tuple[int, int, int, int]] = []
 
         if previous_gray is not None:
-            frame_delta = cv2.absdiff(previous_gray, gray)
-
-            _, threshold = cv2.threshold(
-                frame_delta,
-                config.motion_threshold,
-                255,
-                cv2.THRESH_BINARY,
+            bounding_boxes = _build_motion_boxes(
+                gray=gray,
+                previous_gray=previous_gray,
+                config=config,
             )
 
-            threshold = cv2.dilate(
-                threshold,
-                None,
-                iterations=config.dilate_iterations,
-            )
-
-            contours, _ = cv2.findContours(
-                threshold,
-                cv2.RETR_EXTERNAL,
-                cv2.CHAIN_APPROX_SIMPLE,
-            )
-
-            for contour in contours:
-                area = cv2.contourArea(contour)
-
-                if area < config.min_contour_area:
-                    continue
-
-                x, y, w, h = cv2.boundingRect(contour)
-                bounding_boxes.append((x, y, w, h))
-
-            motion_detected = len(bounding_boxes) > 0
+        motion_detected = len(bounding_boxes) > 0
 
         if motion_detected:
             motion_frames += 1
 
+            # Raw events: every transition from NO MOTION to MOTION.
             if not previous_motion:
+                raw_motion_events += 1
+
+            # Smoothed events: merge motion events separated by a short gap.
+            if not in_motion_event:
                 motion_events += 1
+                in_motion_event = True
+
+            no_motion_gap_frames = 0
+
+        else:
+            if in_motion_event:
+                no_motion_gap_frames += 1
+
+                if no_motion_gap_frames > max_event_gap_frames:
+                    in_motion_event = False
+                    no_motion_gap_frames = 0
 
         previous_motion = motion_detected
         previous_gray = gray
@@ -182,28 +259,14 @@ def detect_motion(
                 writer = cv2.VideoWriter(
                     str(output_video_path),
                     fourcc,
-                    max(config.fps_sample, 1),
+                    max(effective_processed_fps, 1),
                     (width, height),
                 )
 
-            for x, y, w, h in bounding_boxes:
-                cv2.rectangle(
-                    resized,
-                    (x, y),
-                    (x + w, y + h),
-                    (0, 255, 0),
-                    2,
-                )
-
-            label = "MOTION" if motion_detected else "NO MOTION"
-            cv2.putText(
-                resized,
-                label,
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0) if motion_detected else (255, 255, 255),
-                2,
+            _draw_motion_overlay(
+                frame=resized,
+                bounding_boxes=bounding_boxes,
+                motion_detected=motion_detected,
             )
 
             writer.write(resized)
@@ -227,11 +290,14 @@ def detect_motion(
             "source_fps": source_fps,
             "source_frame_count": source_frame_count,
             "frames_read": total_frames_read,
+            "frame_interval": frame_interval,
+            "effective_processed_fps": round(effective_processed_fps, 4),
         },
         "config": asdict(config),
         "metrics": {
             "processed_frames": processed_frames,
             "motion_frames": motion_frames,
+            "raw_motion_events": raw_motion_events,
             "motion_events": motion_events,
             "avg_processing_ms": round(avg_processing_ms, 4),
             "estimated_processing_fps": round(estimated_processing_fps, 2),
