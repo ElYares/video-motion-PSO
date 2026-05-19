@@ -74,21 +74,40 @@ El score es heuristico. No reemplaza una evaluacion con etiquetas reales. Usa:
 - `events_per_minute`
 - `fragmentation = raw_motion_events / motion_frames`
 - `avg_processing_ms`
+- `resource_score`, calculado como proxy de costo de recursos
+
+El costo de recursos se calcula en `core.motion.evaluator._calculate_resource_score()`.
+El score favorece configuraciones mas ligeras usando tres senales normalizadas:
+
+- `resolution_width`: ancho procesado, normalizado entre `320` y `960`.
+- `effective_processed_fps`: FPS realmente procesado segun duracion del video.
+- `processed_frame_ratio`: `processed_frames / source_frame_count`.
+
+Formula:
+
+```txt
+resource_cost = width_ratio * 0.45 + fps_ratio * 0.35 + processed_frame_ratio * 0.20
+resource_score = 100 - resource_cost * 100
+```
+
+`resource_cost` queda entre `0` y `1`; `resource_score` queda entre `0` y
+`100`, donde un valor mas alto significa menor costo estimado.
 
 Cada objetivo cambia pesos y ratio esperado:
 
-| Objetivo | Ratio objetivo | Peso ratio | Peso estabilidad | Peso rendimiento |
-| --- | ---: | ---: | ---: | ---: |
-| `balanced` | `0.25` | `0.45` | `0.30` | `0.25` |
-| `sensitive` | `0.32` | `0.50` | `0.15` | `0.35` |
-| `low_cpu` | `0.20` | `0.30` | `0.20` | `0.50` |
+| Objetivo | Ratio objetivo | Peso ratio | Peso estabilidad | Peso rendimiento | Peso recursos |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `balanced` | `0.25` | `0.45` | `0.25` | `0.20` | `0.10` |
+| `sensitive` | `0.32` | `0.50` | `0.15` | `0.30` | `0.05` |
+| `low_cpu` | `0.20` | `0.20` | `0.15` | `0.20` | `0.45` |
 
 Componentes:
 
 - `ratio_score`: premia estar cerca del ratio objetivo.
 - `stability_score`: penaliza eventos por minuto altos y fragmentacion.
 - `performance_score`: penaliza mayor `avg_processing_ms`.
-- `final_score`: combinacion ponderada de los tres componentes.
+- `resource_score`: premia menor costo estimado de resolucion, FPS efectivo y proporcion de frames procesados.
+- `final_score`: combinacion ponderada de los cuatro componentes.
 
 ## Perfiles manuales
 
@@ -199,6 +218,13 @@ genera:
 
 - `outputs/reports/optimizer_comparison.json`
 - `outputs/reports/optimizer_comparison.csv`
+
+La tabla CLI y el CSV del comparador incluyen las columnas de recursos:
+
+- `resource_score`
+- `resource_cost`
+- `effective_processed_fps`
+- `processed_frame_ratio`
 
 ## Limitaciones actuales
 

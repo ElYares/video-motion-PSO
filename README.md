@@ -8,7 +8,7 @@ El objetivo es encontrar configuraciones que mantengan buen balance entre:
 
 - deteccion de movimiento suficiente
 - estabilidad de eventos
-- bajo costo de CPU por frame procesado
+- bajo costo estimado de recursos: resolucion, FPS efectivo y frames procesados
 
 ## Que hace el proyecto
 
@@ -27,7 +27,9 @@ El pipeline principal vive en `core/motion/detector.py`:
 La evaluacion y optimizacion usan una funcion heuristica de score definida en
 `core/motion/evaluator.py`. Todavia no es una metrica de exactitud con ground
 truth; compara configuraciones por proporcion de movimiento, estabilidad y costo
-de procesamiento.
+de procesamiento. El score tambien reporta `resource_score`, `resource_cost`,
+`effective_processed_fps` y `processed_frame_ratio` para comparar el costo
+estimado de cada configuracion.
 
 ## Instalacion
 
@@ -83,6 +85,9 @@ Salidas principales:
 - `outputs/reports/evaluation_summary_<objective>.json`
 - `outputs/reports/evaluation_ranking_<objective>.csv`
 - `outputs/videos/<profile>_evaluated.mp4` si se usa `--write-videos`
+
+Los reportes incluyen los componentes del score: ratio, estabilidad,
+rendimiento y recursos.
 
 ## Como correr random search
 
@@ -157,16 +162,22 @@ python apps/cli/compare_optimizers.py \
   --output-csv outputs/reports/optimizer_comparison.csv
 ```
 
+La tabla de comparacion muestra `Resource`, `Eff FPS` y `Frame Ratio`. Esas
+columnas salen de `resource_score`, `effective_processed_fps` y
+`processed_frame_ratio`.
+
 ## Configs ganadoras actuales
 
-Resultados locales generados con `datasets/videos/workers_hallway.mp4`. Los
-archivos de salida estan en `outputs/reports/optimizer_comparison.*`.
+Snapshot local actualizado con `datasets/videos/workers_hallway.mp4` para el
+objetivo `low_cpu`. Los archivos de salida estan en
+`outputs/reports/optimizer_comparison.*`.
 
-| Objetivo | Metodo ganador | Score | Configuracion |
-| --- | --- | ---: | --- |
-| `balanced` | `manual_profiles/random_balanced_best` | `92.0875` | `w=480`, `fps=18.0`, `thr=32`, `blur=3`, `area=300`, `dilate=3`, `gap=0.5` |
-| `sensitive` | `seeded_pso/pso_best` | `93.1035` | `w=640`, `fps=25.0`, `thr=22`, `blur=3`, `area=300`, `dilate=2`, `gap=0.5` |
-| `low_cpu` | `seeded_pso/pso_best` | `89.6734` | `w=640`, `fps=15.0`, `thr=43`, `blur=5`, `area=600`, `dilate=2`, `gap=0.4` |
+| Objetivo | Metodo ganador | Score | Resource | Eff FPS | Frame ratio | Configuracion |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| `low_cpu` | `seeded_pso/pso_best` | `91.0649` | `92.6471` | `8.3333` | `0.3333` | `w=320`, `fps=8.0`, `thr=36`, `blur=5`, `area=400`, `dilate=2`, `gap=0.5` |
+
+Las corridas anteriores de `balanced` y `sensitive` deben regenerarse con esta
+version si se quieren comparar usando las columnas nuevas de recursos.
 
 Mas detalle en [docs/results.md](docs/results.md).
 
