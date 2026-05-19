@@ -118,21 +118,102 @@ def _clamp(value: float, minimum: float = 0.0, maximum: float = 100.0) -> float:
     return max(minimum, min(value, maximum))
 
 
+def _calculate_effective_processed_fps(
+    metrics: dict[str, Any],
+    video: dict[str, Any],
+) -> float:
+    """
+    Estimate the effective processed FPS based on processed frames and video duration.
+
+    This is more reliable than requested fps_sample, because the real processed
+    FPS depends on the source FPS and the frame interval used by the detector.
+    """
+
+    source_fps = video["source_fps"] or 25.0
+    source_frame_count = video["source_frame_count"] or metrics["processed_frames"]
+
+    duration_seconds = max(source_frame_count / source_fps, 1.0)
+
+    return metrics["processed_frames"] / duration_seconds
+
+
+def _calculate_resource_score(
+    result: dict[str, Any],
+) -> dict[str, float]:
+    """
+    Calculate how lightweight a configuration is.
+
+    Higher resource_score means cheaper/lighter processing.
+
+    Cost proxy:
+    - resolution width
+    - effective processed FPS
+    - processed frame ratio
+    """
+
+    metrics = result["metrics"]
+    video = result["video"]
+    config = result["config"]
+
+    source_frame_count = max(
+        video["source_frame_count"] or metrics["processed_frames"],
+        1,
+    )
+
+    processed_frames = metrics["processed_frames"]
+    resolution_width = config["resolution_width"]
+
+    effective_processed_fps = _calculate_effective_processed_fps(
+        metrics=metrics,
+        video=video,
+    )
+
+    width_ratio = _clamp(
+        (resolution_width - 320) / (960 - 320),
+        0.0,
+        1.0,
+    )
+
+    fps_ratio = _clamp(
+        (effective_processed_fps - 8) / (25 - 8),
+        0.0,
+        1.0,
+    )
+
+    processed_frame_ratio = _clamp(
+        processed_frames / source_frame_count,
+        0.0,
+        1.0,
+    )
+
+    resource_cost = width_ratio * 0.45 + fps_ratio * 0.35 + processed_frame_ratio * 0.20
+
+    resource_score = _clamp(100 - resource_cost * 100)
+
+    return {
+        "resource_score": round(resource_score, 4),
+        "resource_cost": round(resource_cost, 4),
+        "effective_processed_fps": round(effective_processed_fps, 4),
+        "processed_frame_ratio": round(processed_frame_ratio, 4),
+    }
+
+
 def calculate_score(
-    result: dict[str, Any], objective: str = "balanced"
+    result: dict[str, Any],
+    objective: str = "balanced",
 ) -> dict[str, float]:
     """
     Calculate a heuristic score for a detection result.
 
     This is not a scientific accuracy metric yet because we do not have
-    ground-truth labels. It helps compare profiles based on motion ratio,
-    stability and processing cost.
+    ground-truth labels. It helps compare profiles based on:
 
-    raw_motion_events:
-        Counts direct transitions from NO MOTION to MOTION.
+    - motion ratio
+    - detection stability
+    - processing speed
+    - resource usage
 
-    motion_events:
-        Counts smoothed events after merging short gaps.
+    For low_cpu, resource usage is strongly weighted.
     """
 
     metrics = result["metrics"]
@@ -150,38 +231,48 @@ def calculate_score(
 
     motion_ratio = motion_frames / processed_frames
 
-    # Smoothed events are better for real-world event count.
+    # Smoothed events approximate visual/real events.
     events_per_minute = motion_events / (duration_seconds / 60)
 
-    # Raw events are better for detecting detector instability/parpadeo.
+    # Raw events help detect flickering/unstable detection.
     fragmentation = raw_motion_events / max(motion_frames, 1)
+
+    resource_info = _calculate_resource_score(result)
 
     if objective == "low_cpu":
         target_motion_ratio = 0.20
-        ratio_weight = 0.30
-        stability_weight = 0.20
-        performance_weight = 0.50
+
+        ratio_weight = 0.20
+        stability_weight = 0.15
+        performance_weight = 0.20
+        resource_weight = 0.45
 
     elif objective == "sensitive":
         target_motion_ratio = 0.32
+
         ratio_weight = 0.50
         stability_weight = 0.15
-        performance_weight = 0.35
+        performance_weight = 0.30
+        resource_weight = 0.05
 
     else:
         target_motion_ratio = 0.25
+
         ratio_weight = 0.45
-        stability_weight = 0.30
-        performance_weight = 0.25
+        stability_weight = 0.25
+        performance_weight = 0.20
+        resource_weight = 0.10
 
     ratio_score = _clamp(100 - abs(motion_ratio - target_motion_ratio) * 250)
     stability_score = _clamp(100 - events_per_minute * 3 - fragmentation * 100)
     performance_score = _clamp(100 - avg_processing_ms * 20)
+    resource_score = resource_info["resource_score"]
 
     final_score = (
         ratio_score * ratio_weight
         + stability_score * stability_weight
         + performance_score * performance_weight
+        + resource_score * resource_weight
     )
 
     return {
@@ -189,9 +280,13 @@ def calculate_score(
         "ratio_score": round(ratio_score, 4),
         "stability_score": round(stability_score, 4),
         "performance_score": round(performance_score, 4),
+        "resource_score": round(resource_score, 4),
+        "resource_cost": resource_info["resource_cost"],
         "motion_ratio": round(motion_ratio, 4),
         "events_per_minute": round(events_per_minute, 4),
         "fragmentation": round(fragmentation, 4),
+        "effective_processed_fps": resource_info["effective_processed_fps"],
+        "processed_frame_ratio": resource_info["processed_frame_ratio"],
     }
 
 
@@ -241,6 +336,8 @@ def _write_ranking_csv(
                 "ratio_score",
                 "stability_score",
                 "performance_score",
+                "resource_score",
+                "resource_cost",
                 "motion_frames",
                 "raw_motion_events",
                 "motion_events",
@@ -249,6 +346,8 @@ def _write_ranking_csv(
                 "motion_ratio",
                 "events_per_minute",
                 "fragmentation",
+                "effective_processed_fps",
+                "processed_frame_ratio",
                 "resolution_width",
                 "fps_sample",
                 "motion_threshold",
@@ -274,6 +373,8 @@ def _write_ranking_csv(
                     "ratio_score": score["ratio_score"],
                     "stability_score": score["stability_score"],
                     "performance_score": score["performance_score"],
+                    "resource_score": score.get("resource_score"),
+                    "resource_cost": score.get("resource_cost"),
                     "motion_frames": metrics["motion_frames"],
                     "raw_motion_events": metrics.get(
                         "raw_motion_events",
@@ -285,6 +386,8 @@ def _write_ranking_csv(
                     "motion_ratio": score["motion_ratio"],
                     "events_per_minute": score["events_per_minute"],
                     "fragmentation": score["fragmentation"],
+                    "effective_processed_fps": score.get("effective_processed_fps"),
+                    "processed_frame_ratio": score.get("processed_frame_ratio"),
                     "resolution_width": config["resolution_width"],
                     "fps_sample": config["fps_sample"],
                     "motion_threshold": config["motion_threshold"],
@@ -328,7 +431,10 @@ def evaluate_profiles(
             output_video_path=output_video_path,
         )
 
-        score = calculate_score(result, objective=objective)
+        score = calculate_score(
+            result=result,
+            objective=objective,
+        )
 
         profile_report = {
             "profile": {

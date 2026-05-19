@@ -62,6 +62,9 @@ def render_comparison_table(console: Console, payload: dict) -> None:
     table.add_column("Score", justify="right")
     table.add_column("Motion Ratio", justify="right")
     table.add_column("Avg ms", justify="right")
+    table.add_column("Resource", justify="right")
+    table.add_column("Eff FPS", justify="right")
+    table.add_column("Frame Ratio", justify="right")
     table.add_column("Resolution", justify="right")
     table.add_column("FPS", justify="right")
     table.add_column("Threshold", justify="right")
@@ -85,6 +88,9 @@ def render_comparison_table(console: Console, payload: dict) -> None:
                 str(score["final_score"]),
                 str(score["motion_ratio"]),
                 str(metrics["avg_processing_ms"]),
+                str(score.get("resource_score", "")),
+                str(score.get("effective_processed_fps", "")),
+                str(score.get("processed_frame_ratio", "")),
                 str(config["resolution_width"]),
                 str(config["fps_sample"]),
                 str(config["motion_threshold"]),
@@ -104,6 +110,8 @@ def render_best_summary(console: Console, payload: dict) -> None:
     summary_table.add_column("Best Method")
     summary_table.add_column("Name")
     summary_table.add_column("Score", justify="right")
+    summary_table.add_column("Resource", justify="right")
+    summary_table.add_column("Eff FPS", justify="right")
     summary_table.add_column("Config")
 
     comparison = payload["comparison"]
@@ -117,10 +125,13 @@ def render_best_summary(console: Console, payload: dict) -> None:
                 "N/A",
                 "N/A",
                 "N/A",
+                "N/A",
+                "N/A",
                 "No reports found",
             )
             continue
 
+        score = best["score"]
         config = best["config"]
 
         compact_config = {
@@ -137,7 +148,9 @@ def render_best_summary(console: Console, payload: dict) -> None:
             objective,
             best["method"],
             best["name"],
-            str(best["score"]["final_score"]),
+            str(score["final_score"]),
+            str(score.get("resource_score", "")),
+            str(score.get("effective_processed_fps", "")),
             json.dumps(compact_config),
         )
 
