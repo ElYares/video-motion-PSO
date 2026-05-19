@@ -43,6 +43,19 @@ def get_default_profiles() -> list[MotionProfile]:
             ),
         ),
         MotionProfile(
+            name="random_balanced_best",
+            description="Best balanced configuration found by random search.",
+            config=MotionConfig(
+                resolution_width=480,
+                fps_sample=18.0,
+                motion_threshold=32,
+                blur_kernel=3,
+                min_contour_area=300,
+                dilate_iterations=3,
+                event_merge_gap_seconds=0.5,
+            ),
+        ),
+        MotionProfile(
             name="strict",
             description="More conservative profile to reduce false positives.",
             config=MotionConfig(
