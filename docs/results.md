@@ -3,14 +3,19 @@
 Este documento resume los resultados locales guardados en `outputs/reports/`.
 Los reportes y videos no se versionan porque `outputs/` esta ignorado por git.
 
+El snapshot actualizado cubre `low_cpu` con las metricas de recursos agregadas
+al score. Si se necesita una comparacion final de `balanced` y `sensitive` con
+la misma version del scoring, hay que regenerar esos reportes.
+
 ## Contexto de ejecucion
 
 - Video usado: `datasets/videos/workers_hallway.mp4`
 - Frames fuente: `948`
 - FPS fuente: `25.0`
-- Objetivos evaluados: `balanced`, `sensitive`, `low_cpu`
-- Random seed: `42`
-- Comparador: `apps/cli/compare_optimizers.py`
+- Objetivo actualizado: `low_cpu`
+- Random search: `100` iteraciones, seed `42`
+- PSO: `12` particulas, `10` iteraciones, seed `42`
+- Comparador: `apps/cli/compare_optimizers.py --objectives low_cpu`
 
 ## Reportes generados
 
@@ -21,43 +26,39 @@ Los reportes y videos no se versionan porque `outputs/` esta ignorado por git.
 | PSO | `outputs/reports/pso_search_<objective>.json` | `outputs/reports/pso_search_<objective>.csv` |
 | Comparacion final | `outputs/reports/optimizer_comparison.json` | `outputs/reports/optimizer_comparison.csv` |
 
-## Ganadores por objetivo
+## Resultado actualizado de low_cpu
 
-| Objetivo | Rank | Metodo | Nombre | Score | Motion ratio | Avg ms | Configuracion |
-| --- | ---: | --- | --- | ---: | ---: | ---: | --- |
-| `balanced` | 1 | `manual_profiles` | `random_balanced_best` | `92.0875` | `0.2542` | `0.5445` | `w=480`, `fps=18.0`, `thr=32`, `blur=3`, `area=300`, `dilate=3`, `gap=0.5` |
-| `sensitive` | 1 | `seeded_pso` | `pso_best` | `93.1035` | `0.3186` | `0.5622` | `w=640`, `fps=25.0`, `thr=22`, `blur=3`, `area=300`, `dilate=2`, `gap=0.5` |
-| `low_cpu` | 1 | `seeded_pso` | `pso_best` | `89.6734` | `0.2025` | `0.5622` | `w=640`, `fps=15.0`, `thr=43`, `blur=5`, `area=600`, `dilate=2`, `gap=0.4` |
+| Rank | Metodo | Nombre | Score | Resource | Cost | Motion ratio | Eff FPS | Frame ratio | Avg ms | Configuracion |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | `seeded_pso` | `pso_best` | `91.0649` | `92.6471` | `0.0735` | `0.2057` | `8.3333` | `0.3333` | `0.4552` | `w=320`, `fps=8.0`, `thr=36`, `blur=5`, `area=400`, `dilate=2`, `gap=0.5` |
+| 2 | `manual_profiles` | `low_cpu` | `90.3681` | `92.6471` | `0.0735` | `0.1867` | `8.3333` | `0.3333` | `0.4357` | `w=320`, `fps=8.0`, `thr=35`, `blur=5`, `area=500`, `dilate=2`, `gap=0.5` |
+| 3 | `random_search` | `random_search_best` | `88.3826` | `92.6471` | `0.0735` | `0.1677` | `8.3333` | `0.3333` | `0.4321` | `w=320`, `fps=8.0`, `thr=32`, `blur=3`, `area=500`, `dilate=1`, `gap=0.7` |
 
-## Ranking completo del comparador
+Lectura rapida:
 
-| Objetivo | Rank | Metodo | Score | Configuracion |
-| --- | ---: | --- | ---: | --- |
-| `balanced` | 1 | `manual_profiles/random_balanced_best` | `92.0875` | `w=480`, `fps=18.0`, `thr=32`, `blur=3`, `area=300`, `dilate=3`, `gap=0.5` |
-| `balanced` | 2 | `seeded_pso/pso_best` | `92.0669` | `w=480`, `fps=18.0`, `thr=32`, `blur=3`, `area=350`, `dilate=3`, `gap=0.6` |
-| `balanced` | 3 | `random_search/random_search_best` | `91.6295` | `w=480`, `fps=18.0`, `thr=32`, `blur=3`, `area=300`, `dilate=3`, `gap=0.5` |
-| `sensitive` | 1 | `seeded_pso/pso_best` | `93.1035` | `w=640`, `fps=25.0`, `thr=22`, `blur=3`, `area=300`, `dilate=2`, `gap=0.5` |
-| `sensitive` | 2 | `manual_profiles/back_person_sensitive` | `92.4931` | `w=640`, `fps=25.0`, `thr=22`, `blur=3`, `area=300`, `dilate=2`, `gap=0.5` |
-| `sensitive` | 3 | `random_search/random_search_best` | `90.5487` | `w=640`, `fps=10.0`, `thr=32`, `blur=7`, `area=300`, `dilate=3`, `gap=0.7` |
-| `low_cpu` | 1 | `seeded_pso/pso_best` | `89.6734` | `w=640`, `fps=15.0`, `thr=43`, `blur=5`, `area=600`, `dilate=2`, `gap=0.4` |
-| `low_cpu` | 2 | `random_search/random_search_best` | `89.0692` | `w=320`, `fps=15.0`, `thr=22`, `blur=5`, `area=800`, `dilate=3`, `gap=0.5` |
-| `low_cpu` | 3 | `manual_profiles/low_cpu` | `87.7272` | `w=320`, `fps=8.0`, `thr=35`, `blur=5`, `area=500`, `dilate=2`, `gap=0.5` |
+- PSO queda arriba por `0.6968` puntos sobre el perfil manual `low_cpu`.
+- Las tres mejores configuraciones comparten el mismo costo de recursos:
+  `resolution_width=320`, `effective_processed_fps=8.3333` y
+  `processed_frame_ratio=0.3333`.
+- La mejora de PSO viene de acercarse mas al ratio objetivo (`0.20`) y reducir
+  fragmentacion (`0.0923`) con un costo de procesamiento todavia bajo.
+
+## Mejor perfil manual low_cpu
+
+| Rank | Profile | Score | Motion frames | Raw events | Events | Avg ms | Resource | Motion ratio |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | `low_cpu` | `90.3681` | `59` | `7` | `3` | `0.4357` | `92.6471` | `0.1867` |
+| 2 | `baseline` | `73.8257` | `103` | `9` | `4` | `0.5891` | `58.2353` | `0.2173` |
+| 3 | `strict` | `72.6164` | `67` | `6` | `3` | `0.5444` | `58.2353` | `0.1414` |
+| 4 | `sensitive` | `70.1430` | `144` | `13` | `3` | `0.5957` | `58.2353` | `0.3038` |
+| 5 | `random_balanced_best` | `63.0781` | `241` | `15` | `2` | `0.5102` | `33.7500` | `0.2542` |
+| 6 | `back_person_sensitive` | `54.1178` | `302` | `13` | `3` | `0.5743` | `22.5000` | `0.3186` |
 
 ## Comandos usados para reproducir
 
 Evaluar perfiles:
 
 ```bash
-python apps/cli/evaluate_configs.py \
-  --input datasets/videos/workers_hallway.mp4 \
-  --objective balanced \
-  --write-videos
-
-python apps/cli/evaluate_configs.py \
-  --input datasets/videos/workers_hallway.mp4 \
-  --objective sensitive \
-  --write-videos
-
 python apps/cli/evaluate_configs.py \
   --input datasets/videos/workers_hallway.mp4 \
   --objective low_cpu \
@@ -69,22 +70,8 @@ Random search:
 ```bash
 python apps/cli/random_search.py \
   --input datasets/videos/workers_hallway.mp4 \
-  --objective balanced \
-  --iterations 100 \
-  --seed 42 \
-  --write-best-video
-
-python apps/cli/random_search.py \
-  --input datasets/videos/workers_hallway.mp4 \
-  --objective sensitive \
-  --iterations 30 \
-  --seed 42 \
-  --write-best-video
-
-python apps/cli/random_search.py \
-  --input datasets/videos/workers_hallway.mp4 \
   --objective low_cpu \
-  --iterations 30 \
+  --iterations 100 \
   --seed 42 \
   --write-best-video
 ```
@@ -92,22 +79,6 @@ python apps/cli/random_search.py \
 PSO:
 
 ```bash
-python apps/cli/pso_search.py \
-  --input datasets/videos/workers_hallway.mp4 \
-  --objective balanced \
-  --particles 12 \
-  --iterations 10 \
-  --seed 42 \
-  --write-best-video
-
-python apps/cli/pso_search.py \
-  --input datasets/videos/workers_hallway.mp4 \
-  --objective sensitive \
-  --particles 12 \
-  --iterations 10 \
-  --seed 42 \
-  --write-best-video
-
 python apps/cli/pso_search.py \
   --input datasets/videos/workers_hallway.mp4 \
   --objective low_cpu \
@@ -122,7 +93,7 @@ Comparar optimizadores:
 ```bash
 python apps/cli/compare_optimizers.py \
   --reports-dir outputs/reports \
-  --objectives balanced sensitive low_cpu \
+  --objectives low_cpu \
   --output-json outputs/reports/optimizer_comparison.json \
   --output-csv outputs/reports/optimizer_comparison.csv
 ```
@@ -130,7 +101,7 @@ python apps/cli/compare_optimizers.py \
 ## Lectura de columnas
 
 - `w`: ancho objetivo del frame procesado.
-- `fps`: FPS muestreados del video fuente.
+- `fps`: FPS solicitados para muestreo.
 - `thr`: threshold de diferencia de pixeles.
 - `blur`: kernel de Gaussian blur.
 - `area`: area minima de contorno.
@@ -138,3 +109,11 @@ python apps/cli/compare_optimizers.py \
 - `gap`: segundos de hueco sin movimiento para fusionar eventos.
 - `motion_ratio`: `motion_frames / processed_frames`.
 - `avg_ms`: tiempo promedio de procesamiento por frame.
+- `resource_score`: score de recursos; mas alto significa menor costo estimado.
+- `resource_cost`: proxy normalizado de costo entre `0` y `1`.
+- `effective_processed_fps`: FPS realmente procesado segun frames procesados y duracion del video.
+- `processed_frame_ratio`: proporcion de frames fuente que fueron procesados.
+
+Los CSV de perfiles, random search, PSO y comparacion incluyen las columnas de
+recursos. El CSV de PSO tambien incluye `source`; el CSV del comparador agrega
+`objective`, `method`, `name` y `source_file`.
