@@ -5,11 +5,11 @@ import json
 import sys
 from pathlib import Path
 
-from rich.console import Console
-from rich.table import Table
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR))
+
+from rich.console import Console
+from rich.table import Table
 
 from core.motion.evaluator import evaluate_profiles
 
@@ -41,6 +41,60 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def render_results_table(console: Console, summary: dict, objective: str) -> None:
+    """
+    Render a ranking table in the terminal.
+    """
+
+    table = Table(title=f"Motion Profile Evaluation - {objective}")
+
+    table.add_column("Rank", justify="right")
+    table.add_column("Profile")
+    table.add_column("Score", justify="right")
+    table.add_column("Motion Frames", justify="right")
+    table.add_column("Raw Events", justify="right")
+    table.add_column("Events", justify="right")
+    table.add_column("Avg ms", justify="right")
+    table.add_column("Motion Ratio", justify="right")
+
+    for index, item in enumerate(summary["evaluations"], start=1):
+        metrics = item["metrics"]
+        score = item["score"]
+
+        table.add_row(
+            str(index),
+            item["profile"]["name"],
+            str(score["final_score"]),
+            str(metrics["motion_frames"]),
+            str(metrics.get("raw_motion_events", metrics["motion_events"])),
+            str(metrics["motion_events"]),
+            str(metrics["avg_processing_ms"]),
+            str(score["motion_ratio"]),
+        )
+
+    console.print(table)
+
+
+def render_best_profile(console: Console, summary: dict) -> None:
+    """
+    Render the best profile details as JSON.
+    """
+
+    best_profile = summary["best_profile"]
+
+    console.print("\nBest profile:")
+    console.print_json(
+        json.dumps(
+            {
+                "name": best_profile["profile"]["name"],
+                "score": best_profile["score"],
+                "metrics": best_profile["metrics"],
+                "config": best_profile["profile"]["config"],
+            }
+        )
+    )
+
+
 def main() -> None:
     args = parse_args()
     console = Console()
@@ -51,42 +105,22 @@ def main() -> None:
         write_videos=args.write_videos,
     )
 
-    table = Table(title=f"Motion Profile Evaluation - {args.objective}")
-
-    table.add_column("Rank", justify="right")
-    table.add_column("Profile")
-    table.add_column("Score", justify="right")
-    table.add_column("Motion Frames", justify="right")
-    table.add_column("Events", justify="right")
-    table.add_column("Avg ms", justify="right")
-    table.add_column("Motion Ratio", justify="right")
-
-    for index, item in enumerate(summary["evaluations"], start=1):
-        table.add_row(
-            str(index),
-            item["profile"]["name"],
-            str(item["score"]["final_score"]),
-            str(item["metrics"]["motion_frames"]),
-            str(item["metrics"]["motion_events"]),
-            str(item["metrics"]["avg_processing_ms"]),
-            str(item["score"]["motion_ratio"]),
-        )
-
-    console.print(table)
-
-    console.print("\nBest profile:")
-    console.print_json(
-        json.dumps(
-            {
-                "name": summary["best_profile"]["profile"]["name"],
-                "score": summary["best_profile"]["score"],
-                "config": summary["best_profile"]["profile"]["config"],
-            }
-        )
+    render_results_table(
+        console=console,
+        summary=summary,
+        objective=args.objective,
     )
 
-    console.print("\nSummary saved at:")
-    console.print("outputs/reports/evaluation_summary.json")
+    render_best_profile(
+        console=console,
+        summary=summary,
+    )
+
+    output_files = summary["output_files"]
+
+    console.print("\nFiles saved:")
+    console.print(f"JSON: {output_files['summary_json']}")
+    console.print(f"CSV:  {output_files['ranking_csv']}")
 
 
 if __name__ == "__main__":
