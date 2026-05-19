@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env
+
+# IDE/editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Outputs
+outputs/
+*.log
+
+# Datasets / videos pesados
+datasets/videos/*
+!datasets/videos/.gitkeep
+
+# Media temporal
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Excepto samples pequeños si luego decides versionarlos
+!samples/
