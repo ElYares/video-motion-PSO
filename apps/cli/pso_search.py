@@ -80,6 +80,12 @@ def parse_args() -> argparse.Namespace:
         help="Generate annotated video for the best PSO configuration.",
     )
 
+    parser.add_argument(
+        "--no-seeds",
+        action="store_true",
+        help="Disable known seed configurations and start PSO fully random.",
+    )
+
     return parser.parse_args()
 
 
@@ -169,6 +175,7 @@ def main() -> None:
         cognitive_weight=args.cognitive_weight,
         social_weight=args.social_weight,
         write_best_video=args.write_best_video,
+        use_seed_configs=not args.no_seeds,
     )
 
     render_history_table(

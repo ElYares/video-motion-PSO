@@ -175,6 +175,117 @@ def _decode_position(position: list[float], bounds: PSOBounds) -> MotionConfig:
     )
 
 
+def _encode_config_to_position(config: MotionConfig) -> list[float]:
+    """
+    Convert a MotionConfig into a PSO position vector.
+    """
+
+    return [
+        float(config.resolution_width),
+        float(config.fps_sample),
+        float(config.motion_threshold),
+        float(config.blur_kernel),
+        float(config.min_contour_area),
+        float(config.dilate_iterations),
+        float(config.event_merge_gap_seconds),
+    ]
+
+
+def get_seed_configs(objective: str) -> list[MotionConfig]:
+    """
+    Return known good configurations used to seed PSO.
+
+    These seeds come from manual profiles and random search results.
+    """
+
+    random_balanced_best = MotionConfig(
+        resolution_width=480,
+        fps_sample=18.0,
+        motion_threshold=32,
+        blur_kernel=3,
+        min_contour_area=300,
+        dilate_iterations=3,
+        event_merge_gap_seconds=0.5,
+    )
+
+    back_person_sensitive = MotionConfig(
+        resolution_width=640,
+        fps_sample=25.0,
+        motion_threshold=22,
+        blur_kernel=3,
+        min_contour_area=300,
+        dilate_iterations=2,
+        event_merge_gap_seconds=0.5,
+    )
+
+    low_cpu = MotionConfig(
+        resolution_width=320,
+        fps_sample=8.0,
+        motion_threshold=35,
+        blur_kernel=5,
+        min_contour_area=500,
+        dilate_iterations=2,
+        event_merge_gap_seconds=0.5,
+    )
+
+    baseline = MotionConfig(
+        resolution_width=640,
+        fps_sample=12.0,
+        motion_threshold=35,
+        blur_kernel=5,
+        min_contour_area=800,
+        dilate_iterations=2,
+        event_merge_gap_seconds=0.5,
+    )
+
+    if objective == "sensitive":
+        return [
+            back_person_sensitive,
+            random_balanced_best,
+            baseline,
+        ]
+
+    if objective == "low_cpu":
+        return [
+            low_cpu,
+            random_balanced_best,
+            baseline,
+        ]
+
+    return [
+        random_balanced_best,
+        baseline,
+        back_person_sensitive,
+    ]
+
+
+def _create_seed_particle(
+    config: MotionConfig,
+    bounds: PSOBounds,
+    random_generator: random.Random,
+) -> Particle:
+    """
+    Create a PSO particle from a known good MotionConfig.
+
+    The position starts exactly from the known config, while velocity gets
+    a small random value so PSO can explore around it.
+    """
+
+    position = _encode_config_to_position(config)
+    velocity: list[float] = []
+
+    for minimum, maximum in _get_bound_ranges(bounds):
+        value_range = maximum - minimum
+        velocity.append(random_generator.uniform(-value_range, value_range) * 0.03)
+
+    return Particle(
+        position=position,
+        velocity=velocity,
+        best_position=position.copy(),
+        best_score=float("-inf"),
+    )
+
+
 def _config_signature(config: MotionConfig) -> tuple[Any, ...]:
     """
     Build a hashable signature to cache repeated evaluations.
@@ -410,6 +521,7 @@ def run_pso_search(
     reports_dir: str | Path = "outputs/reports",
     videos_dir: str | Path = "outputs/videos",
     write_best_video: bool = False,
+    use_seed_configs: bool = True,
 ) -> dict[str, Any]:
     """
     Run Particle Swarm Optimization for motion detection configuration.
@@ -439,13 +551,30 @@ def run_pso_search(
     random_generator = random.Random(seed)
     bounds = PSOBounds()
 
-    particles = [
-        _create_particle(
-            bounds=bounds,
-            random_generator=random_generator,
+    particles: list[Particle] = []
+
+    if use_seed_configs:
+        seed_configs = get_seed_configs(objective=objective)
+
+        for seed_config in seed_configs:
+            if len(particles) >= particles_count:
+                break
+
+            particles.append(
+                _create_seed_particle(
+                    config=seed_config,
+                    bounds=bounds,
+                    random_generator=random_generator,
+                )
+            )
+
+    while len(particles) < particles_count:
+        particles.append(
+            _create_particle(
+                bounds=bounds,
+                random_generator=random_generator,
+            )
         )
-        for _ in range(particles_count)
-    ]
 
     cache: dict[tuple[Any, ...], dict[str, Any]] = {}
 
@@ -546,6 +675,7 @@ def run_pso_search(
             "inertia_weight": inertia_weight,
             "cognitive_weight": cognitive_weight,
             "social_weight": social_weight,
+            "use_seed_configs": use_seed_configs,
         },
         "best_result": best_result,
         "history": history,
