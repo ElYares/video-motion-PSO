@@ -402,13 +402,25 @@ def _write_ranking_csv(
 def evaluate_profiles(
     video_path: str | Path,
     objective: str = "balanced",
+    method: str = "frame_diff",
     write_videos: bool = False,
     reports_dir: str | Path = "outputs/reports",
     videos_dir: str | Path = "outputs/videos",
 ) -> dict[str, Any]:
     """
     Run multiple motion detection profiles against the same video and rank them.
+
+    method:
+        frame_diff -> previous-frame difference.
+        mog2       -> background subtraction.
     """
+
+    valid_methods = {"frame_diff", "mog2"}
+
+    if method not in valid_methods:
+        raise ValueError(
+            f"Invalid method: {method}. Expected one of: {sorted(valid_methods)}"
+        )
 
     video_path = Path(video_path)
     reports_dir = Path(reports_dir)
@@ -420,14 +432,18 @@ def evaluate_profiles(
     evaluations: list[dict[str, Any]] = []
 
     for profile in get_default_profiles():
+        profile_config_data = asdict(profile.config)
+        profile_config_data["method"] = method
+        config = MotionConfig(**profile_config_data)
+
         output_video_path = None
 
         if write_videos:
-            output_video_path = videos_dir / f"{profile.name}_evaluated.mp4"
+            output_video_path = videos_dir / f"{method}_{profile.name}_evaluated.mp4"
 
         result = detect_motion(
             video_path=video_path,
-            config=profile.config,
+            config=config,
             output_video_path=output_video_path,
         )
 
@@ -440,14 +456,16 @@ def evaluate_profiles(
             "profile": {
                 "name": profile.name,
                 "description": profile.description,
-                "config": asdict(profile.config),
+                "method": method,
+                "config": asdict(config),
             },
             "score": score,
             "metrics": result["metrics"],
             "output": result["output"],
         }
 
-        report_path = reports_dir / f"{profile.name}_evaluation.json"
+        report_path = reports_dir / f"{method}_{profile.name}_evaluation.json"
+
         _write_profile_report(
             report_path=report_path,
             profile_report=profile_report,
@@ -460,12 +478,13 @@ def evaluate_profiles(
         reverse=True,
     )
 
-    summary_path = reports_dir / f"evaluation_summary_{objective}.json"
-    csv_path = reports_dir / f"evaluation_ranking_{objective}.csv"
+    summary_path = reports_dir / f"evaluation_summary_{objective}_{method}.json"
+    csv_path = reports_dir / f"evaluation_ranking_{objective}_{method}.csv"
 
     summary = {
         "video_path": str(video_path),
         "objective": objective,
+        "method": method,
         "best_profile": evaluations[0],
         "evaluations": evaluations,
         "output_files": {

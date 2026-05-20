@@ -33,6 +33,13 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--method",
+        default="frame_diff",
+        choices=["frame_diff", "mog2"],
+        help="Motion detection method.",
+    )
+
+    parser.add_argument(
         "--write-videos",
         action="store_true",
         help="Generate annotated videos for each profile.",
@@ -41,12 +48,17 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def render_results_table(console: Console, summary: dict, objective: str) -> None:
+def render_results_table(
+    console: Console,
+    summary: dict,
+    objective: str,
+    method: str,
+) -> None:
     """
     Render a ranking table in the terminal.
     """
 
-    table = Table(title=f"Motion Profile Evaluation - {objective}")
+    table = Table(title=f"Motion Profile Evaluation - {objective} - {method}")
 
     table.add_column("Rank", justify="right")
     table.add_column("Profile")
@@ -56,6 +68,7 @@ def render_results_table(console: Console, summary: dict, objective: str) -> Non
     table.add_column("Events", justify="right")
     table.add_column("Avg ms", justify="right")
     table.add_column("Motion Ratio", justify="right")
+    table.add_column("Resource", justify="right")
 
     for index, item in enumerate(summary["evaluations"], start=1):
         metrics = item["metrics"]
@@ -70,6 +83,7 @@ def render_results_table(console: Console, summary: dict, objective: str) -> Non
             str(metrics["motion_events"]),
             str(metrics["avg_processing_ms"]),
             str(score["motion_ratio"]),
+            str(score.get("resource_score", "")),
         )
 
     console.print(table)
@@ -87,6 +101,7 @@ def render_best_profile(console: Console, summary: dict) -> None:
         json.dumps(
             {
                 "name": best_profile["profile"]["name"],
+                "method": best_profile["profile"].get("method"),
                 "score": best_profile["score"],
                 "metrics": best_profile["metrics"],
                 "config": best_profile["profile"]["config"],
@@ -102,6 +117,7 @@ def main() -> None:
     summary = evaluate_profiles(
         video_path=args.input,
         objective=args.objective,
+        method=args.method,
         write_videos=args.write_videos,
     )
 
@@ -109,6 +125,7 @@ def main() -> None:
         console=console,
         summary=summary,
         objective=args.objective,
+        method=args.method,
     )
 
     render_best_profile(

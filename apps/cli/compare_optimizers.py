@@ -11,7 +11,12 @@ sys.path.insert(0, str(ROOT_DIR))
 from rich.console import Console
 from rich.table import Table
 
-from core.motion.comparator import SUPPORTED_OBJECTIVES, compare_optimizers
+from core.motion.comparator import (
+    DEFAULT_DETECTOR_METHODS,
+    SUPPORTED_DETECTOR_METHODS,
+    SUPPORTED_OBJECTIVES,
+    compare_optimizers,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +36,14 @@ def parse_args() -> argparse.Namespace:
         default=SUPPORTED_OBJECTIVES,
         choices=SUPPORTED_OBJECTIVES,
         help="Objectives to compare.",
+    )
+
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=DEFAULT_DETECTOR_METHODS,
+        choices=SUPPORTED_DETECTOR_METHODS,
+        help="Detector methods to compare.",
     )
 
     parser.add_argument(
@@ -57,7 +70,9 @@ def render_comparison_table(console: Console, payload: dict) -> None:
 
     table.add_column("Objective")
     table.add_column("Rank", justify="right")
-    table.add_column("Method")
+    table.add_column("Detector")
+    table.add_column("Method Rank", justify="right")
+    table.add_column("Optimizer")
     table.add_column("Name")
     table.add_column("Score", justify="right")
     table.add_column("Motion Ratio", justify="right")
@@ -83,6 +98,8 @@ def render_comparison_table(console: Console, payload: dict) -> None:
             table.add_row(
                 objective,
                 str(item["rank"]),
+                item["detector_method"],
+                str(item.get("method_rank", "")),
                 item["method"],
                 item["name"],
                 str(score["final_score"]),
@@ -107,7 +124,8 @@ def render_best_summary(console: Console, payload: dict) -> None:
     summary_table = Table(title="Best Optimizer Per Objective")
 
     summary_table.add_column("Objective")
-    summary_table.add_column("Best Method")
+    summary_table.add_column("Detector")
+    summary_table.add_column("Best Optimizer")
     summary_table.add_column("Name")
     summary_table.add_column("Score", justify="right")
     summary_table.add_column("Resource", justify="right")
@@ -122,6 +140,7 @@ def render_best_summary(console: Console, payload: dict) -> None:
         if best is None:
             summary_table.add_row(
                 objective,
+                "N/A",
                 "N/A",
                 "N/A",
                 "N/A",
@@ -146,6 +165,7 @@ def render_best_summary(console: Console, payload: dict) -> None:
 
         summary_table.add_row(
             objective,
+            best["detector_method"],
             best["method"],
             best["name"],
             str(score["final_score"]),
@@ -157,6 +177,74 @@ def render_best_summary(console: Console, payload: dict) -> None:
     console.print(summary_table)
 
 
+def render_method_summary(console: Console, payload: dict) -> None:
+    """
+    Render compact best-method summary per objective and detector method.
+    """
+
+    if len(payload.get("methods", [])) < 2:
+        return
+
+    summary_table = Table(title="Best Optimizer Per Detector Method")
+
+    summary_table.add_column("Objective")
+    summary_table.add_column("Detector")
+    summary_table.add_column("Best Optimizer")
+    summary_table.add_column("Name")
+    summary_table.add_column("Score", justify="right")
+    summary_table.add_column("Resource", justify="right")
+    summary_table.add_column("Eff FPS", justify="right")
+    summary_table.add_column("Config")
+
+    comparison = payload["comparison"]
+
+    for objective in payload["objectives"]:
+        methods = comparison[objective].get("methods", {})
+
+        for detector_method in payload["methods"]:
+            method_result = methods.get(detector_method, {})
+            best = method_result.get("best")
+
+            if best is None:
+                summary_table.add_row(
+                    objective,
+                    detector_method,
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                    "N/A",
+                    "No reports found",
+                )
+                continue
+
+            score = best["score"]
+            config = best["config"]
+
+            compact_config = {
+                "w": config["resolution_width"],
+                "fps": config["fps_sample"],
+                "thr": config["motion_threshold"],
+                "blur": config["blur_kernel"],
+                "area": config["min_contour_area"],
+                "dilate": config["dilate_iterations"],
+                "gap": config["event_merge_gap_seconds"],
+            }
+
+            summary_table.add_row(
+                objective,
+                detector_method,
+                best["method"],
+                best["name"],
+                str(score["final_score"]),
+                str(score.get("resource_score", "")),
+                str(score.get("effective_processed_fps", "")),
+                json.dumps(compact_config),
+            )
+
+    console.print(summary_table)
+
+
 def main() -> None:
     args = parse_args()
     console = Console()
@@ -164,11 +252,17 @@ def main() -> None:
     payload = compare_optimizers(
         reports_dir=args.reports_dir,
         objectives=args.objectives,
+        methods=args.methods,
         output_json=args.output_json,
         output_csv=args.output_csv,
     )
 
     render_best_summary(
+        console=console,
+        payload=payload,
+    )
+
+    render_method_summary(
         console=console,
         payload=payload,
     )

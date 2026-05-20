@@ -13,8 +13,12 @@ class MotionConfig:
     """
     Configuration used by the motion detector.
 
-    Later, PSO will optimize these values automatically.
+    method:
+        frame_diff -> compares current frame against previous frame.
+        mog2       -> OpenCV background subtraction using MOG2.
     """
+
+    method: str = "frame_diff"
 
     resolution_width: int = 640
     fps_sample: float = 12.0
@@ -23,6 +27,13 @@ class MotionConfig:
     min_contour_area: int = 800
     dilate_iterations: int = 2
     event_merge_gap_seconds: float = 0.5
+
+    # MOG2-specific parameters.
+    mog2_history: int = 120
+    mog2_var_threshold: float = 25.0
+    mog2_detect_shadows: bool = True
+    mog2_learning_rate: float = -1.0
+    mog2_warmup_frames: int = 5
 
 
 def _ensure_odd_kernel(kernel_size: int) -> int:
@@ -55,31 +66,22 @@ def _resize_frame(frame, target_width: int):
     return cv2.resize(frame, (target_width, target_height))
 
 
-def _build_motion_boxes(
-    gray, previous_gray, config: MotionConfig
+def _find_motion_boxes_from_binary_mask(
+    binary_mask,
+    config: MotionConfig,
 ) -> list[tuple[int, int, int, int]]:
     """
-    Compare the current grayscale frame against the previous one and return
-    bounding boxes for relevant motion areas.
+    Find bounding boxes from a binary motion mask.
     """
 
-    frame_delta = cv2.absdiff(previous_gray, gray)
-
-    _, threshold = cv2.threshold(
-        frame_delta,
-        config.motion_threshold,
-        255,
-        cv2.THRESH_BINARY,
-    )
-
-    threshold = cv2.dilate(
-        threshold,
+    binary_mask = cv2.dilate(
+        binary_mask,
         None,
         iterations=config.dilate_iterations,
     )
 
     contours, _ = cv2.findContours(
-        threshold,
+        binary_mask,
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE,
     )
@@ -98,10 +100,66 @@ def _build_motion_boxes(
     return bounding_boxes
 
 
+def _build_frame_diff_motion_boxes(
+    gray,
+    previous_gray,
+    config: MotionConfig,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Compare the current grayscale frame against the previous one and return
+    bounding boxes for relevant motion areas.
+    """
+
+    frame_delta = cv2.absdiff(previous_gray, gray)
+
+    _, threshold = cv2.threshold(
+        frame_delta,
+        config.motion_threshold,
+        255,
+        cv2.THRESH_BINARY,
+    )
+
+    return _find_motion_boxes_from_binary_mask(
+        binary_mask=threshold,
+        config=config,
+    )
+
+
+def _build_mog2_motion_boxes(
+    gray,
+    background_subtractor,
+    config: MotionConfig,
+) -> list[tuple[int, int, int, int]]:
+    """
+    Use MOG2 background subtraction to detect foreground/motion areas.
+
+    MOG2 can mark shadows as gray values around 127. We threshold at 200 to keep
+    strong foreground pixels only.
+    """
+
+    foreground_mask = background_subtractor.apply(
+        gray,
+        learningRate=config.mog2_learning_rate,
+    )
+
+    _, foreground_mask = cv2.threshold(
+        foreground_mask,
+        200,
+        255,
+        cv2.THRESH_BINARY,
+    )
+
+    return _find_motion_boxes_from_binary_mask(
+        binary_mask=foreground_mask,
+        config=config,
+    )
+
+
 def _draw_motion_overlay(
     frame,
     bounding_boxes: list[tuple[int, int, int, int]],
     motion_detected: bool,
+    method: str,
 ) -> None:
     """
     Draw bounding boxes and motion label over the output frame.
@@ -128,6 +186,36 @@ def _draw_motion_overlay(
         2,
     )
 
+    cv2.putText(
+        frame,
+        f"method={method}",
+        (20, 75),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (255, 255, 255),
+        2,
+    )
+
+
+def _validate_config(config: MotionConfig) -> None:
+    """
+    Validate detector configuration.
+    """
+
+    valid_methods = {"frame_diff", "mog2"}
+
+    if config.method not in valid_methods:
+        raise ValueError(
+            f"Invalid motion detection method: {config.method}. "
+            f"Expected one of: {sorted(valid_methods)}"
+        )
+
+    if config.fps_sample <= 0:
+        raise ValueError("fps_sample must be greater than 0")
+
+    if config.resolution_width <= 0:
+        raise ValueError("resolution_width must be greater than 0")
+
 
 def detect_motion(
     video_path: str | Path,
@@ -137,17 +225,12 @@ def detect_motion(
     """
     Detect motion in a video using classic computer vision.
 
-    Pipeline:
-    1. Read video.
-    2. Sample frames based on fps_sample.
-    3. Resize frame.
-    4. Convert to grayscale.
-    5. Apply blur.
-    6. Compare current frame against previous frame.
-    7. Threshold difference.
-    8. Find contours.
-    9. Count raw and smoothed motion events.
+    Supported methods:
+    - frame_diff
+    - mog2
     """
+
+    _validate_config(config)
 
     video_path = Path(video_path)
 
@@ -187,6 +270,15 @@ def detect_motion(
 
     writer = None
 
+    background_subtractor = None
+
+    if config.method == "mog2":
+        background_subtractor = cv2.createBackgroundSubtractorMOG2(
+            history=config.mog2_history,
+            varThreshold=config.mog2_var_threshold,
+            detectShadows=config.mog2_detect_shadows,
+        )
+
     if output_video_path:
         output_video_path = Path(output_video_path)
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,12 +306,27 @@ def detect_motion(
 
         bounding_boxes: list[tuple[int, int, int, int]] = []
 
-        if previous_gray is not None:
-            bounding_boxes = _build_motion_boxes(
+        if config.method == "frame_diff":
+            if previous_gray is not None:
+                bounding_boxes = _build_frame_diff_motion_boxes(
+                    gray=gray,
+                    previous_gray=previous_gray,
+                    config=config,
+                )
+
+        elif config.method == "mog2":
+            if background_subtractor is None:
+                raise RuntimeError("MOG2 background subtractor was not initialized.")
+
+            bounding_boxes = _build_mog2_motion_boxes(
                 gray=gray,
-                previous_gray=previous_gray,
+                background_subtractor=background_subtractor,
                 config=config,
             )
+
+            # MOG2 needs a few frames to learn the background.
+            if processed_frames < config.mog2_warmup_frames:
+                bounding_boxes = []
 
         motion_detected = len(bounding_boxes) > 0
 
@@ -267,6 +374,7 @@ def detect_motion(
                 frame=resized,
                 bounding_boxes=bounding_boxes,
                 motion_detected=motion_detected,
+                method=config.method,
             )
 
             writer.write(resized)

@@ -127,9 +127,9 @@ Cada perfil se ejecuta con `detect_motion()`, recibe score con
 
 Salidas:
 
-- Reporte individual por perfil: `outputs/reports/<profile>_evaluation.json`
-- Resumen por objetivo: `outputs/reports/evaluation_summary_<objective>.json`
-- Ranking CSV: `outputs/reports/evaluation_ranking_<objective>.csv`
+- Reporte individual por perfil: `outputs/reports/<method>_<profile>_evaluation.json`
+- Resumen por objetivo: `outputs/reports/evaluation_summary_<objective>_<method>.json`
+- Ranking CSV: `outputs/reports/evaluation_ranking_<objective>_<method>.csv`
 
 ## Random search
 
@@ -209,18 +209,24 @@ Entrada principal: `core.motion.comparator.compare_optimizers()`.
 
 El comparador no corre deteccion otra vez. Lee los JSON ya generados:
 
-- `evaluation_summary_<objective>.json`
+- `evaluation_summary_<objective>_<method>.json`
 - `random_search_<objective>.json`
 - `pso_search_<objective>.json`
 
-Normaliza cada ganador a una estructura comun, ordena por `final_score` y
-genera:
+Para `frame_diff`, tambien acepta reportes antiguos sin sufijo de metodo como
+fallback. Normaliza cada ganador a una estructura comun, agrega
+`detector_method`, ordena por `final_score` y genera:
 
 - `outputs/reports/optimizer_comparison.json`
 - `outputs/reports/optimizer_comparison.csv`
 
+La salida mantiene un ranking general por objetivo y agrega un desglose por
+metodo de deteccion en `comparison[objective]["methods"][detector_method]`.
+
 La tabla CLI y el CSV del comparador incluyen las columnas de recursos:
 
+- `detector_method`
+- `method_rank`
 - `resource_score`
 - `resource_cost`
 - `effective_processed_fps`
