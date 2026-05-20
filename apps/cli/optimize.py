@@ -17,6 +17,13 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--method",
+        default="frame_diff",
+        choices=["frame_diff", "mog2"],
+        help="Motion detection method.",
+    )
+
+    parser.add_argument(
         "--input",
         required=True,
         help="Path to input video.",
@@ -82,6 +89,7 @@ def main() -> None:
     output_video_path.parent.mkdir(parents=True, exist_ok=True)
 
     config = MotionConfig(
+        method=args.method,
         resolution_width=args.resolution_width,
         fps_sample=args.fps_sample,
         motion_threshold=args.motion_threshold,

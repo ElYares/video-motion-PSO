@@ -18,7 +18,7 @@ El pipeline principal vive en `core/motion/detector.py`:
 2. Muestrea frames segun `fps_sample`.
 3. Redimensiona cada frame a `resolution_width`.
 4. Convierte a escala de grises y aplica blur.
-5. Compara el frame actual contra el anterior.
+5. Detecta movimiento con `frame_diff` o con sustraccion de fondo `mog2`.
 6. Aplica threshold y dilatacion.
 7. Filtra contornos por area minima.
 8. Calcula metricas de movimiento y rendimiento.
@@ -51,6 +51,7 @@ python apps/cli/optimize.py \
   --input datasets/videos/workers_hallway.mp4 \
   --output-report outputs/reports/motion_report.json \
   --output-video outputs/videos/motion_detected.mp4 \
+  --method frame_diff \
   --resolution-width 640 \
   --fps-sample 12 \
   --motion-threshold 35 \
@@ -71,6 +72,7 @@ Compara los perfiles manuales definidos en `get_default_profiles()`:
 python apps/cli/evaluate_configs.py \
   --input datasets/videos/workers_hallway.mp4 \
   --objective balanced \
+  --method frame_diff \
   --write-videos
 ```
 
@@ -80,11 +82,16 @@ Objetivos disponibles:
 - `sensitive`: favorece detectar mas movimiento sutil.
 - `low_cpu`: favorece menor costo de procesamiento.
 
+Metodos disponibles:
+
+- `frame_diff`: diferencia entre frames consecutivos.
+- `mog2`: sustraccion de fondo con OpenCV MOG2.
+
 Salidas principales:
 
-- `outputs/reports/evaluation_summary_<objective>.json`
-- `outputs/reports/evaluation_ranking_<objective>.csv`
-- `outputs/videos/<profile>_evaluated.mp4` si se usa `--write-videos`
+- `outputs/reports/evaluation_summary_<objective>_<method>.json`
+- `outputs/reports/evaluation_ranking_<objective>_<method>.csv`
+- `outputs/videos/<method>_<profile>_evaluated.mp4` si se usa `--write-videos`
 
 Los reportes incluyen los componentes del score: ratio, estabilidad,
 rendimiento y recursos.
@@ -146,7 +153,7 @@ los tres objetivos:
 
 ```bash
 for objective in balanced sensitive low_cpu; do
-  python apps/cli/evaluate_configs.py --input datasets/videos/workers_hallway.mp4 --objective "$objective"
+  python apps/cli/evaluate_configs.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --method frame_diff
   python apps/cli/random_search.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --iterations 30 --seed 42
   python apps/cli/pso_search.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --particles 12 --iterations 10 --seed 42
 done
@@ -158,12 +165,26 @@ Despues compara los JSON existentes sin reprocesar video:
 python apps/cli/compare_optimizers.py \
   --reports-dir outputs/reports \
   --objectives balanced sensitive low_cpu \
+  --methods frame_diff \
   --output-json outputs/reports/optimizer_comparison.json \
   --output-csv outputs/reports/optimizer_comparison.csv
 ```
 
-La tabla de comparacion muestra `Resource`, `Eff FPS` y `Frame Ratio`. Esas
-columnas salen de `resource_score`, `effective_processed_fps` y
+El comparador tambien puede contrastar metodos de deteccion cuando existan los
+reportes correspondientes:
+
+```bash
+python apps/cli/compare_optimizers.py \
+  --reports-dir outputs/reports \
+  --objectives sensitive low_cpu \
+  --methods frame_diff mog2 \
+  --output-json outputs/reports/optimizer_comparison.json \
+  --output-csv outputs/reports/optimizer_comparison.csv
+```
+
+La tabla de comparacion muestra `Detector`, `Method Rank`, `Resource`,
+`Eff FPS` y `Frame Ratio`. Esas columnas salen de `detector_method`,
+`method_rank`, `resource_score`, `effective_processed_fps` y
 `processed_frame_ratio`.
 
 ## Configs ganadoras actuales
@@ -175,6 +196,13 @@ objetivo `low_cpu`. Los archivos de salida estan en
 | Objetivo | Metodo ganador | Score | Resource | Eff FPS | Frame ratio | Configuracion |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
 | `low_cpu` | `seeded_pso/pso_best` | `91.0649` | `92.6471` | `8.3333` | `0.3333` | `w=320`, `fps=8.0`, `thr=36`, `blur=5`, `area=400`, `dilate=2`, `gap=0.5` |
+
+Snapshot MOG2 de perfiles manuales:
+
+| Objetivo | Mejor perfil | Score | Motion ratio | Resource | Configuracion |
+| --- | --- | ---: | ---: | ---: | --- |
+| `sensitive` | `low_cpu` | `81.6724` | `0.3101` | `92.6471` | `w=320`, `fps=8.0`, `thr=35`, `area=500`, `history=120`, `var=25.0` |
+| `low_cpu` | `low_cpu` | `78.1945` | `0.3101` | `92.6471` | `w=320`, `fps=8.0`, `thr=35`, `area=500`, `history=120`, `var=25.0` |
 
 Las corridas anteriores de `balanced` y `sensitive` deben regenerarse con esta
 version si se quieren comparar usando las columnas nuevas de recursos.
