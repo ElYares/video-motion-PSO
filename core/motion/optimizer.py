@@ -48,12 +48,14 @@ def get_default_search_space() -> SearchSpace:
 def generate_random_config(
     search_space: SearchSpace,
     random_generator: random.Random,
+    methods: list[str],
 ) -> MotionConfig:
     """
     Generate a random MotionConfig from the provided search space.
     """
 
     return MotionConfig(
+        method=random_generator.choice(methods),
         resolution_width=random_generator.choice(search_space.resolution_widths),
         fps_sample=random_generator.choice(search_space.fps_samples),
         motion_threshold=random_generator.choice(search_space.motion_thresholds),
@@ -72,6 +74,7 @@ def _config_signature(config: MotionConfig) -> tuple[Any, ...]:
     """
 
     return (
+        config.method,
         config.resolution_width,
         config.fps_sample,
         config.motion_threshold,
@@ -108,6 +111,7 @@ def _write_random_search_csv(
         writer = csv.DictWriter(
             csv_file,
             fieldnames=[
+                "detector_method",
                 "rank",
                 "final_score",
                 "ratio_score",
@@ -145,6 +149,7 @@ def _write_random_search_csv(
             writer.writerow(
                 {
                     "rank": rank,
+                    "detector_method": config.get("method", "frame_diff"),
                     "final_score": score["final_score"],
                     "ratio_score": score["ratio_score"],
                     "stability_score": score["stability_score"],
@@ -180,6 +185,7 @@ def run_random_search(
     objective: str = "balanced",
     iterations: int = 30,
     seed: int = 42,
+    methods: list[str] | None = None,
     reports_dir: str | Path = "outputs/reports",
     videos_dir: str | Path = "outputs/videos",
     write_best_video: bool = False,
@@ -206,6 +212,17 @@ def run_random_search(
     random_generator = random.Random(seed)
     search_space = get_default_search_space()
 
+    valid_methods = {"frame_diff", "mog2"}
+    selected_methods = methods or ["frame_diff"]
+
+    invalid_methods = set(selected_methods) - valid_methods
+
+    if invalid_methods:
+        raise ValueError(
+            f"Invalid methods: {sorted(invalid_methods)}. "
+            f"Expected one of: {sorted(valid_methods)}"
+        )
+
     results: list[dict[str, Any]] = []
     evaluated_signatures: set[tuple[Any, ...]] = set()
 
@@ -218,6 +235,7 @@ def run_random_search(
         config = generate_random_config(
             search_space=search_space,
             random_generator=random_generator,
+            methods=selected_methods,
         )
 
         signature = _config_signature(config)
@@ -259,7 +277,10 @@ def run_random_search(
 
     if write_best_video and best_result is not None:
         best_config = MotionConfig(**best_result["config"])
-        best_video_path = videos_dir / f"random_search_best_{objective}.mp4"
+        best_method = best_result["config"].get("method", "frame_diff")
+        best_video_path = (
+            videos_dir / f"random_search_best_{objective}_{best_method}.mp4"
+        )
 
         detect_motion(
             video_path=video_path,
@@ -277,6 +298,7 @@ def run_random_search(
     payload = {
         "video_path": str(video_path),
         "objective": objective,
+        "methods": selected_methods,
         "iterations_requested": iterations,
         "iterations_evaluated": len(results),
         "seed": seed,

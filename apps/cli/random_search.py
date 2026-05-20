@@ -26,6 +26,14 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["frame_diff"],
+        choices=["frame_diff", "mog2"],
+        help="Motion detection methods to include in random search.",
+    )
+
+    parser.add_argument(
         "--objective",
         default="balanced",
         choices=["balanced", "low_cpu", "sensitive"],
@@ -63,6 +71,7 @@ def render_results_table(console: Console, payload: dict) -> None:
     table = Table(title=f"Random Search Results - {payload['objective']}")
 
     table.add_column("Rank", justify="right")
+    table.add_column("Method")
     table.add_column("Score", justify="right")
     table.add_column("Resolution", justify="right")
     table.add_column("FPS", justify="right")
@@ -83,6 +92,7 @@ def render_results_table(console: Console, payload: dict) -> None:
 
         table.add_row(
             str(rank),
+            str(config.get("method", "frame_diff")),
             str(score["final_score"]),
             str(config["resolution_width"]),
             str(config["fps_sample"]),
@@ -127,6 +137,7 @@ def main() -> None:
         objective=args.objective,
         iterations=args.iterations,
         seed=args.seed,
+        methods=args.methods,
         write_best_video=args.write_best_video,
     )
 

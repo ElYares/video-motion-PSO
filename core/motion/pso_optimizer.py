@@ -34,6 +34,9 @@ class Particle:
     """
     A PSO particle.
 
+    detector_method:
+        The detector method assigned to this particle.
+
     position:
         Current candidate solution.
 
@@ -51,6 +54,7 @@ class Particle:
     velocity: list[float]
     best_position: list[float]
     best_score: float
+    detector_method: str = "frame_diff"
     best_payload: dict[str, Any] | None = None
 
 
@@ -94,7 +98,11 @@ def _get_bound_ranges(bounds: PSOBounds) -> list[tuple[float, float]]:
     ]
 
 
-def _decode_position(position: list[float], bounds: PSOBounds) -> MotionConfig:
+def _decode_position(
+    position: list[float],
+    bounds: PSOBounds,
+    detector_method: str = "frame_diff",
+) -> MotionConfig:
     """
     Convert a PSO continuous vector into a valid MotionConfig.
 
@@ -165,6 +173,7 @@ def _decode_position(position: list[float], bounds: PSOBounds) -> MotionConfig:
     )
 
     return MotionConfig(
+        method=detector_method,
         resolution_width=resolution_width,
         fps_sample=fps_sample,
         motion_threshold=motion_threshold,
@@ -191,14 +200,19 @@ def _encode_config_to_position(config: MotionConfig) -> list[float]:
     ]
 
 
-def get_seed_configs(objective: str) -> list[MotionConfig]:
+def get_seed_configs(
+    objective: str,
+    detector_methods: list[str],
+) -> list[MotionConfig]:
     """
     Return known good configurations used to seed PSO.
 
-    These seeds come from manual profiles and random search results.
+    The same seed parameter sets are expanded across each selected detector
+    method, so PSO can compare frame_diff and mog2 fairly.
     """
 
     random_balanced_best = MotionConfig(
+        method="frame_diff",
         resolution_width=480,
         fps_sample=18.0,
         motion_threshold=32,
@@ -209,6 +223,7 @@ def get_seed_configs(objective: str) -> list[MotionConfig]:
     )
 
     back_person_sensitive = MotionConfig(
+        method="frame_diff",
         resolution_width=640,
         fps_sample=25.0,
         motion_threshold=22,
@@ -219,6 +234,7 @@ def get_seed_configs(objective: str) -> list[MotionConfig]:
     )
 
     low_cpu = MotionConfig(
+        method="frame_diff",
         resolution_width=320,
         fps_sample=8.0,
         motion_threshold=35,
@@ -229,6 +245,7 @@ def get_seed_configs(objective: str) -> list[MotionConfig]:
     )
 
     baseline = MotionConfig(
+        method="frame_diff",
         resolution_width=640,
         fps_sample=12.0,
         motion_threshold=35,
@@ -239,24 +256,35 @@ def get_seed_configs(objective: str) -> list[MotionConfig]:
     )
 
     if objective == "sensitive":
-        return [
+        base_seeds = [
             back_person_sensitive,
             random_balanced_best,
             baseline,
         ]
 
-    if objective == "low_cpu":
-        return [
+    elif objective == "low_cpu":
+        base_seeds = [
             low_cpu,
             random_balanced_best,
             baseline,
         ]
 
-    return [
-        random_balanced_best,
-        baseline,
-        back_person_sensitive,
-    ]
+    else:
+        base_seeds = [
+            random_balanced_best,
+            baseline,
+            back_person_sensitive,
+        ]
+
+    expanded_seeds: list[MotionConfig] = []
+
+    for detector_method in detector_methods:
+        for seed_config in base_seeds:
+            config_data = asdict(seed_config)
+            config_data["method"] = detector_method
+            expanded_seeds.append(MotionConfig(**config_data))
+
+    return expanded_seeds
 
 
 def _create_seed_particle(
@@ -283,6 +311,7 @@ def _create_seed_particle(
         velocity=velocity,
         best_position=position.copy(),
         best_score=float("-inf"),
+        detector_method=config.method,
     )
 
 
@@ -292,6 +321,7 @@ def _config_signature(config: MotionConfig) -> tuple[Any, ...]:
     """
 
     return (
+        config.method,
         config.resolution_width,
         config.fps_sample,
         config.motion_threshold,
@@ -305,6 +335,7 @@ def _config_signature(config: MotionConfig) -> tuple[Any, ...]:
 def _create_particle(
     bounds: PSOBounds,
     random_generator: random.Random,
+    detector_method: str = "frame_diff",
 ) -> Particle:
     """
     Create a random particle inside the PSO search bounds.
@@ -325,6 +356,7 @@ def _create_particle(
         velocity=velocity,
         best_position=position.copy(),
         best_score=float("-inf"),
+        detector_method=detector_method,
     )
 
 
@@ -333,6 +365,7 @@ def _evaluate_position(
     position: list[float],
     bounds: PSOBounds,
     objective: str,
+    detector_method: str,
     cache: dict[tuple[Any, ...], dict[str, Any]],
 ) -> dict[str, Any]:
     """
@@ -342,6 +375,7 @@ def _evaluate_position(
     config = _decode_position(
         position=position,
         bounds=bounds,
+        detector_method=detector_method,
     )
 
     signature = _config_signature(config)
@@ -450,6 +484,7 @@ def _write_pso_csv(output_path: Path, results: list[dict[str, Any]]) -> None:
             fieldnames=[
                 "rank",
                 "source",
+                "detector_method",
                 "final_score",
                 "ratio_score",
                 "stability_score",
@@ -487,6 +522,7 @@ def _write_pso_csv(output_path: Path, results: list[dict[str, Any]]) -> None:
                 {
                     "rank": rank,
                     "source": item.get("source", "pso"),
+                    "detector_method": config.get("method", "frame_diff"),
                     "final_score": score["final_score"],
                     "ratio_score": score["ratio_score"],
                     "stability_score": score["stability_score"],
@@ -530,17 +566,19 @@ def run_pso_search(
     videos_dir: str | Path = "outputs/videos",
     write_best_video: bool = False,
     use_seed_configs: bool = True,
+    detector_methods: list[str] | None = None,
 ) -> dict[str, Any]:
     """
     Run Particle Swarm Optimization for motion detection configuration.
 
     The algorithm:
-    1. Create random particles.
+    1. Create seeded and random particles.
     2. Each particle represents a candidate MotionConfig.
-    3. Evaluate each particle.
-    4. Update personal best and global best.
-    5. Move particles toward better configurations.
-    6. Save JSON, CSV and optional best annotated video.
+    3. Each particle keeps its detector method fixed.
+    4. Evaluate each particle.
+    5. Update personal best and global best.
+    6. Move particles toward better numeric configurations.
+    7. Save JSON, CSV and optional best annotated video.
     """
 
     if particles_count < 1:
@@ -548,6 +586,17 @@ def run_pso_search(
 
     if iterations < 1:
         raise ValueError("iterations must be greater than 0")
+
+    valid_methods = {"frame_diff", "mog2"}
+    selected_methods = detector_methods or ["frame_diff"]
+
+    invalid_methods = set(selected_methods) - valid_methods
+
+    if invalid_methods:
+        raise ValueError(
+            f"Invalid detector methods: {sorted(invalid_methods)}. "
+            f"Expected one of: {sorted(valid_methods)}"
+        )
 
     video_path = Path(video_path)
     reports_dir = Path(reports_dir)
@@ -562,7 +611,10 @@ def run_pso_search(
     particles: list[Particle] = []
 
     if use_seed_configs:
-        seed_configs = get_seed_configs(objective=objective)
+        seed_configs = get_seed_configs(
+            objective=objective,
+            detector_methods=selected_methods,
+        )
 
         for seed_config in seed_configs:
             if len(particles) >= particles_count:
@@ -581,6 +633,7 @@ def run_pso_search(
             _create_particle(
                 bounds=bounds,
                 random_generator=random_generator,
+                detector_method=random_generator.choice(selected_methods),
             )
         )
 
@@ -595,12 +648,13 @@ def run_pso_search(
     for iteration in range(1, iterations + 1):
         iteration_scores: list[float] = []
 
-        for particle_index, particle in enumerate(particles, start=1):
+        for particle in particles:
             payload = _evaluate_position(
                 video_path=video_path,
                 position=particle.position,
                 bounds=bounds,
                 objective=objective,
+                detector_method=particle.detector_method,
                 cache=cache,
             )
 
@@ -658,7 +712,8 @@ def run_pso_search(
 
     if write_best_video and best_result is not None:
         best_config = MotionConfig(**best_result["config"])
-        best_video_path = videos_dir / f"pso_best_{objective}.mp4"
+        best_method = best_config.method
+        best_video_path = videos_dir / f"pso_best_{objective}_{best_method}.mp4"
 
         detect_motion(
             video_path=video_path,
@@ -670,12 +725,19 @@ def run_pso_search(
             "video_path": str(best_video_path),
         }
 
+    methods_suffix = "_".join(selected_methods)
+
     json_path = reports_dir / f"pso_search_{objective}.json"
     csv_path = reports_dir / f"pso_search_{objective}.csv"
 
+    # Keep the classic output names for compatibility. Also include the method
+    # list in the payload so the comparator can read the detector method from
+    # each result.
     payload = {
         "video_path": str(video_path),
         "objective": objective,
+        "detector_methods": selected_methods,
+        "methods_suffix": methods_suffix,
         "particles_count": particles_count,
         "iterations": iterations,
         "seed": seed,
@@ -684,6 +746,7 @@ def run_pso_search(
             "cognitive_weight": cognitive_weight,
             "social_weight": social_weight,
             "use_seed_configs": use_seed_configs,
+            "detector_methods": selected_methods,
         },
         "best_result": best_result,
         "history": history,
