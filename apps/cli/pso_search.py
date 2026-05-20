@@ -26,6 +26,14 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["frame_diff"],
+        choices=["frame_diff", "mog2"],
+        help="Motion detection methods to include in PSO search.",
+    )
+
+    parser.add_argument(
         "--objective",
         default="balanced",
         choices=["balanced", "low_cpu", "sensitive"],
@@ -112,6 +120,7 @@ def render_results_table(console: Console, payload: dict) -> None:
     table = Table(title=f"Top PSO Results - {payload['objective']}")
 
     table.add_column("Rank", justify="right")
+    table.add_column("Method")
     table.add_column("Score", justify="right")
     table.add_column("Resolution", justify="right")
     table.add_column("FPS", justify="right")
@@ -130,6 +139,7 @@ def render_results_table(console: Console, payload: dict) -> None:
 
         table.add_row(
             str(rank),
+            str(config.get("method", "frame_diff")),
             str(score["final_score"]),
             str(config["resolution_width"]),
             str(config["fps_sample"]),
@@ -176,6 +186,7 @@ def main() -> None:
         social_weight=args.social_weight,
         write_best_video=args.write_best_video,
         use_seed_configs=not args.no_seeds,
+        detector_methods=args.methods,
     )
 
     render_history_table(

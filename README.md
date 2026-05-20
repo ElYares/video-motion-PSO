@@ -105,7 +105,8 @@ Random search prueba configuraciones aleatorias del espacio definido en
 python apps/cli/random_search.py \
   --input datasets/videos/workers_hallway.mp4 \
   --objective balanced \
-  --iterations 30 \
+  --methods frame_diff mog2 \
+  --iterations 100 \
   --seed 42 \
   --write-best-video
 ```
@@ -114,7 +115,10 @@ Salidas:
 
 - `outputs/reports/random_search_<objective>.json`
 - `outputs/reports/random_search_<objective>.csv`
-- `outputs/videos/random_search_best_<objective>.mp4` si se usa `--write-best-video`
+- `outputs/videos/random_search_best_<objective>_<method>.mp4` si se usa `--write-best-video`
+
+`--methods` permite probar `frame_diff`, `mog2` o ambos en la misma corrida. El
+ranking y el CSV incluyen la columna `detector_method`.
 
 ## Como correr PSO
 
@@ -125,8 +129,9 @@ default usa semillas conocidas de perfiles manuales y resultados previos.
 python apps/cli/pso_search.py \
   --input datasets/videos/workers_hallway.mp4 \
   --objective balanced \
-  --particles 10 \
-  --iterations 8 \
+  --methods frame_diff mog2 \
+  --particles 12 \
+  --iterations 10 \
   --seed 42 \
   --write-best-video
 ```
@@ -138,13 +143,14 @@ Parametros utiles:
 - `--inertia-weight`: peso de inercia, default `0.65`.
 - `--cognitive-weight`: peso del mejor personal, default `1.5`.
 - `--social-weight`: peso del mejor global, default `1.5`.
+- `--methods`: metodos de deteccion a comparar, default `frame_diff`.
 - `--no-seeds`: desactiva semillas conocidas y arranca aleatorio.
 
 Salidas:
 
 - `outputs/reports/pso_search_<objective>.json`
 - `outputs/reports/pso_search_<objective>.csv`
-- `outputs/videos/pso_best_<objective>.mp4` si se usa `--write-best-video`
+- `outputs/videos/pso_best_<objective>_<method>.mp4` si se usa `--write-best-video`
 
 ## Como comparar optimizadores
 
@@ -154,8 +160,9 @@ los tres objetivos:
 ```bash
 for objective in balanced sensitive low_cpu; do
   python apps/cli/evaluate_configs.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --method frame_diff
-  python apps/cli/random_search.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --iterations 30 --seed 42
-  python apps/cli/pso_search.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --particles 12 --iterations 10 --seed 42
+  python apps/cli/evaluate_configs.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --method mog2
+  python apps/cli/random_search.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --methods frame_diff mog2 --iterations 100 --seed 42
+  python apps/cli/pso_search.py --input datasets/videos/workers_hallway.mp4 --objective "$objective" --methods frame_diff mog2 --particles 12 --iterations 10 --seed 42
 done
 ```
 
@@ -165,18 +172,6 @@ Despues compara los JSON existentes sin reprocesar video:
 python apps/cli/compare_optimizers.py \
   --reports-dir outputs/reports \
   --objectives balanced sensitive low_cpu \
-  --methods frame_diff \
-  --output-json outputs/reports/optimizer_comparison.json \
-  --output-csv outputs/reports/optimizer_comparison.csv
-```
-
-El comparador tambien puede contrastar metodos de deteccion cuando existan los
-reportes correspondientes:
-
-```bash
-python apps/cli/compare_optimizers.py \
-  --reports-dir outputs/reports \
-  --objectives sensitive low_cpu \
   --methods frame_diff mog2 \
   --output-json outputs/reports/optimizer_comparison.json \
   --output-csv outputs/reports/optimizer_comparison.csv
@@ -190,22 +185,23 @@ La tabla de comparacion muestra `Detector`, `Method Rank`, `Resource`,
 ## Configs ganadoras actuales
 
 Snapshot local actualizado con `datasets/videos/workers_hallway.mp4` para el
-objetivo `low_cpu`. Los archivos de salida estan en
+comparador completo `balanced`, `sensitive` y `low_cpu`, usando reportes de
+`frame_diff` y `mog2`. Los archivos de salida estan en
 `outputs/reports/optimizer_comparison.*`.
 
 | Objetivo | Metodo ganador | Score | Resource | Eff FPS | Frame ratio | Configuracion |
 | --- | --- | ---: | ---: | ---: | ---: | --- |
-| `low_cpu` | `seeded_pso/pso_best` | `91.0649` | `92.6471` | `8.3333` | `0.3333` | `w=320`, `fps=8.0`, `thr=36`, `blur=5`, `area=400`, `dilate=2`, `gap=0.5` |
+| `balanced` | `frame_diff/random_search` | `89.7032` | `92.6471` | `8.3333` | `0.3333` | `w=320`, `fps=8.0`, `thr=28`, `blur=5`, `area=300`, `dilate=2`, `gap=0.5` |
+| `sensitive` | `frame_diff/random_search` | `90.5733` | `58.2353` | `12.5` | `0.5` | `w=640`, `fps=10.0`, `thr=28`, `blur=3`, `area=250`, `dilate=1`, `gap=0.3` |
+| `low_cpu` | `frame_diff/seeded_pso` | `91.0673` | `92.6471` | `8.3333` | `0.3333` | `w=320`, `fps=8.0`, `thr=35`, `blur=5`, `area=450`, `dilate=2`, `gap=0.6` |
 
 Snapshot MOG2 de perfiles manuales:
 
 | Objetivo | Mejor perfil | Score | Motion ratio | Resource | Configuracion |
 | --- | --- | ---: | ---: | ---: | --- |
+| `balanced` | `low_cpu` | `74.4352` | `0.3101` | `92.6471` | `w=320`, `fps=8.0`, `thr=35`, `area=500`, `history=120`, `var=25.0` |
 | `sensitive` | `low_cpu` | `81.6724` | `0.3101` | `92.6471` | `w=320`, `fps=8.0`, `thr=35`, `area=500`, `history=120`, `var=25.0` |
 | `low_cpu` | `low_cpu` | `78.1945` | `0.3101` | `92.6471` | `w=320`, `fps=8.0`, `thr=35`, `area=500`, `history=120`, `var=25.0` |
-
-Las corridas anteriores de `balanced` y `sensitive` deben regenerarse con esta
-version si se quieren comparar usando las columnas nuevas de recursos.
 
 Mas detalle en [docs/results.md](docs/results.md).
 

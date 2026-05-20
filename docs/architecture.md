@@ -21,6 +21,7 @@ Campos optimizables:
 
 | Campo | Uso |
 | --- | --- |
+| `method` | Metodo de deteccion: `frame_diff` o `mog2`. |
 | `resolution_width` | Ancho al que se redimensiona cada frame antes de procesar. |
 | `fps_sample` | FPS objetivo a procesar del video fuente. |
 | `motion_threshold` | Threshold binario aplicado a la diferencia entre frames. |
@@ -28,6 +29,16 @@ Campos optimizables:
 | `min_contour_area` | Area minima para considerar movimiento relevante. |
 | `dilate_iterations` | Iteraciones de dilatacion para unir regiones de movimiento. |
 | `event_merge_gap_seconds` | Gap maximo para fusionar eventos separados por pausas cortas. |
+
+Campos especificos de `mog2`:
+
+| Campo | Uso |
+| --- | --- |
+| `mog2_history` | Longitud de historial del sustractor de fondo. |
+| `mog2_var_threshold` | Umbral de varianza de MOG2. |
+| `mog2_detect_shadows` | Activa deteccion de sombras de OpenCV. |
+| `mog2_learning_rate` | Tasa de aprendizaje; `-1.0` deja que OpenCV la ajuste. |
+| `mog2_warmup_frames` | Frames iniciales usados para estabilizar el fondo. |
 
 Pipeline:
 
@@ -37,7 +48,8 @@ Pipeline:
 4. Redimensionar conservando aspecto.
 5. Convertir a grayscale.
 6. Aplicar Gaussian blur.
-7. Comparar contra el frame anterior con `cv2.absdiff`.
+7. Detectar movimiento con `cv2.absdiff` si `method=frame_diff`, o con
+   `cv2.createBackgroundSubtractorMOG2` si `method=mog2`.
 8. Threshold, dilatacion y `cv2.findContours`.
 9. Filtrar contornos por `min_contour_area`.
 10. Contar frames con movimiento, eventos crudos y eventos fusionados.
@@ -135,7 +147,8 @@ Salidas:
 
 Entrada principal: `core.motion.optimizer.run_random_search()`.
 
-El espacio de busqueda esta en `get_default_search_space()`:
+El espacio de busqueda esta en `get_default_search_space()`. El metodo de
+deteccion se elige desde la lista recibida por CLI con `--methods`.
 
 | Parametro | Valores |
 | --- | --- |
@@ -150,20 +163,26 @@ El espacio de busqueda esta en `get_default_search_space()`:
 Algoritmo:
 
 1. Crear generador `random.Random(seed)`.
-2. Muestrear una configuracion del espacio discreto.
-3. Evitar duplicados con firma de configuracion.
+2. Muestrear una configuracion del espacio discreto y un `method` de
+   `--methods`.
+3. Evitar duplicados con firma de configuracion, incluyendo `method`.
 4. Ejecutar `detect_motion()`.
 5. Calcular score.
 6. Repetir hasta `iterations` o `iterations * 10` intentos.
 7. Ordenar por `final_score`.
 8. Guardar JSON y CSV.
 
+El JSON guarda `methods` y cada resultado guarda `config.method`. El CSV agrega
+`detector_method`. Si se pide `--write-best-video`, el archivo queda con sufijo
+del detector: `random_search_best_<objective>_<method>.mp4`.
+
 ## PSO
 
 Entrada principal: `core.motion.pso_optimizer.run_pso_search()`.
 
 PSO trabaja con vectores continuos y luego los decodifica a valores validos de
-`MotionConfig`.
+`MotionConfig`. El metodo de deteccion no forma parte del vector numerico; cada
+particula conserva el `detector_method` asignado al crearse.
 
 Bounds:
 
@@ -191,7 +210,8 @@ Semillas conocidas:
 - `low_cpu`
 - `baseline`
 
-Las semillas cambian por objetivo y se pueden desactivar con `--no-seeds`.
+Las semillas cambian por objetivo, se expanden sobre todos los metodos pedidos
+con `--methods` y se pueden desactivar con `--no-seeds`.
 
 Parametros default:
 
@@ -202,6 +222,12 @@ Parametros default:
 - `cognitive_weight=1.5`
 - `social_weight=1.5`
 - `use_seed_configs=True`
+- `detector_methods=["frame_diff"]`
+
+El JSON guarda `detector_methods`, `methods_suffix` y cada resultado guarda
+`config.method`. El CSV agrega `detector_method`. Si se pide
+`--write-best-video`, el archivo queda con sufijo del detector:
+`pso_best_<objective>_<method>.mp4`.
 
 ## Comparador
 
